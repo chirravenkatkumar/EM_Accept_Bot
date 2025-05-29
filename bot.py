@@ -13,6 +13,7 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WELCOME_LINK = os.getenv("WELCOME_LINK", "https://your-link.com")
+APP_URL = os.getenv("APP_URL")  # e.g., https://your-railway-app.up.railway.app
 
 # ✅ Auto-approve join requests
 async def auto_accept(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -21,11 +22,9 @@ async def auto_accept(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = join_request.chat.id
     user_id = user.id
 
-    # Approve the join request
     await context.bot.approve_chat_join_request(chat_id=chat_id, user_id=user_id)
     print(f"✅ Approved: {user.full_name}")
 
-    # Send welcome message with button
     welcome_text = f"👋 Welcome, {user.full_name}!\nClick the button below to get started:"
     keyboard = InlineKeyboardMarkup(
         [[InlineKeyboardButton("🚀 Open Link", url=WELCOME_LINK)]]
@@ -49,13 +48,29 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Bot is alive!")
 
-# 🔁 Run the bot
+# ✅ Webhook-based run
 if __name__ == '__main__':
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    import asyncio
 
-    app.add_handler(ChatJoinRequestHandler(auto_accept))
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("check", check))
+    async def main():
+        app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    print("🚀 Bot is running...")
-    app.run_polling()
+        app.add_handler(ChatJoinRequestHandler(auto_accept))
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CommandHandler("check", check))
+
+        print("🚀 Starting bot with webhook...")
+
+        PORT = int(os.environ.get("PORT", "8443"))
+        WEBHOOK_PATH = f"/{BOT_TOKEN}"
+        WEBHOOK_URL = f"{APP_URL}{WEBHOOK_PATH}"  # Make sure APP_URL is set in Railway
+
+        await app.bot.delete_webhook(drop_pending_updates=True)  # Avoid Conflict error
+        await app.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            webhook_path=WEBHOOK_PATH,
+            webhook_url=WEBHOOK_URL
+        )
+
+    asyncio.run(main())
