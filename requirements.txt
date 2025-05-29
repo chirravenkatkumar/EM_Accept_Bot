@@ -1,0 +1,8 @@
+python-telegram-bot==20.7
+python-dotenv
+You can install them using:
+
+bash
+Copy
+Edit
+pip install -r requirements.txt
