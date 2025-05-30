@@ -1,59 +1,96 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+import os
+import json
+from dotenv import load_dotenv
+from telegram import Update, Message
 from telegram.ext import (
     ApplicationBuilder,
-    ChatJoinRequestHandler,
     CommandHandler,
+    MessageHandler,
     ContextTypes,
+    filters,
 )
-import os
-from dotenv import load_dotenv
 
-# Load environment variables
+# Load env variables
 load_dotenv()
-
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-WELCOME_LINK = os.getenv("WELCOME_LINK", "https://your-link.com")
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
+USER_DB = "users.json"
+PENDING_BROADCAST = set()
 
-# ✅ Auto-approve join requests
-async def auto_accept(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    join_request = update.chat_join_request
-    user = join_request.from_user
-    chat_id = join_request.chat.id
-    user_id = user.id
+# Ensure DB file
+if not os.path.exists(USER_DB):
+    with open(USER_DB, "w") as f:
+        json.dump([], f)
 
-    await context.bot.approve_chat_join_request(chat_id=chat_id, user_id=user_id)
-    print(f"✅ Approved: {user.full_name}")
+# Save user ID
+def save_user(user_id: int):
+    with open(USER_DB, "r") as f:
+        users = json.load(f)
+    if user_id not in users:
+        users.append(user_id)
+        with open(USER_DB, "w") as f:
+            json.dump(users, f)
 
-    welcome_text = f"👋 Welcome, {user.full_name}!\nClick the button below to get started:"
-    keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("🚀 Open Link", url=WELCOME_LINK)]]
-    )
-
-    try:
-        await context.bot.send_message(chat_id=user_id, text=welcome_text, reply_markup=keyboard)
-    except Exception as e:
-        print(f"⚠️ Couldn't send message: {e}")
-
-# ✅ /start command
+# /start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "👋 Welcome to EM Files Bot!\n\n"
-        "📢 Add me to your channel or group as an *Admin*.\n"
-        "✅ I will auto-accept join requests for you.",
-        parse_mode="Markdown"
-    )
+    user_id = update.effective_user.id
+    save_user(user_id)
+    await update.message.reply_text("👋 Welcome to EM Bot! You're subscribed!")
 
-# ✅ /check command
+# /broadcast command
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        return await update.message.reply_text("❌ You're not authorized.")
+
+    PENDING_BROADCAST.add(user_id)
+    await update.message.reply_text("📢 Please send the message you want to broadcast (text, image, etc).")
+
+# Handle the next message for broadcast
+async def handle_broadcast_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID or user_id not in PENDING_BROADCAST:
+        return
+
+    # Remove pending status
+    PENDING_BROADCAST.remove(user_id)
+
+    with open(USER_DB, "r") as f:
+        users = json.load(f)
+
+    count, failed = 0, 0
+    for uid in users:
+        try:
+            await update.message.copy(chat_id=uid)
+            count += 1
+        except Exception as e:
+            failed += 1
+            print(f"Failed to send to {uid}: {e}")
+
+    await update.message.reply_text(f"✅ Broadcast sent to {count} users.\n❌ Failed: {failed}")
+
+# /stats command
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return await update.message.reply_text("❌ You're not authorized.")
+
+    with open(USER_DB, "r") as f:
+        users = json.load(f)
+    await update.message.reply_text(f"📊 Total subscribers: {len(users)}")
+
+# /check command
 async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✅ Bot is alive!")
+    await update.message.reply_text("✅ Bot is running!")
 
-# 🔁 Run the bot
-if __name__ == '__main__':
+# Run the bot
+if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    app.add_handler(ChatJoinRequestHandler(auto_accept))
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("broadcast", broadcast))
+    app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CommandHandler("check", check))
+    app.add_handler(MessageHandler(filters.ALL, handle_broadcast_content))
 
-    print("🚀 Bot is running with polling...")
+    print("🚀 Bot running with broadcast support...")
     app.run_polling()
